@@ -2,7 +2,8 @@
   {
     "issues": [],
     "id": "control-detailed",
-    "url": null
+    "url": null,
+    "job_title": "Техник лаборатории"
   },
   {
     "issues": [
@@ -20,7 +21,8 @@
       }
     ],
     "id": "shift-needs-detail",
-    "url": null
+    "url": null,
+    "job_title": "Техник лаборатории"
   },
   {
     "issues": [
@@ -42,6 +44,7 @@
       }
     ],
     "id": "office-conflict",
-    "url": null
+    "url": null,
+    "job_title": "Техник лаборатории"
   }
 ]

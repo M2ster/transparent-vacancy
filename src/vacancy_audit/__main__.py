@@ -93,10 +93,14 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                     None,
                 )
+                title = vacancy.get("job-name")
                 results.append(
                     VacancyReport(
                         id=str(vacancy["id"]).strip(),
                         url=url,
+                        job_title=(title.strip() or None)
+                        if isinstance(title, str)
+                        else None,
                         issues=combine_issues(data, model_issues),
                     )
                 )

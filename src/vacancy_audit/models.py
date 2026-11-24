@@ -37,3 +37,4 @@ class Review(Contract):
 class VacancyReport(Review):
     id: str
     url: str | None
+    job_title: str | None = None

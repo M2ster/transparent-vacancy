@@ -1,3 +1,4 @@
+import re
 from collections import Counter
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -37,6 +38,28 @@ def is_web_url(url: str) -> bool:
     return parsed.scheme in {"http", "https"} and bool(parsed.hostname)
 
 
+def show_vacancy(report: VacancyReport) -> None:
+    vacancy_id = f"ID {report.id}"
+    title = (report.job_title or "").strip()
+    identity = f"{title} · {vacancy_id}" if title else vacancy_id
+    identity = re.sub(r"([\\`*_{}\[\]<>&$!~])", r"\\\1", " ".join(identity.split()))
+    status = f"Замечаний: {len(report.issues)}" if report.issues else "Без замечаний"
+    with st.expander(f"{identity} · {status}"):
+        if report.url and is_web_url(report.url):
+            st.link_button("Открыть вакансию", report.url)
+        if not report.issues:
+            st.success("В отчёте по этой вакансии замечаний нет.")
+        for issue in report.issues:
+            with st.container(border=True):
+                st.subheader(f"{TOPICS[issue.topic]} · {TYPES[issue.type]}")
+                st.text(issue.problem)
+                for evidence in issue.evidence:
+                    st.text(evidence.field)
+                    st.text(evidence.quote or "Сведения отсутствуют.")
+                st.markdown("**Рекомендация редактору**")
+                st.code(issue.recommendation, language=None, wrap_lines=True)
+
+
 def main() -> None:
     st.set_page_config(page_title="Прозрачная вакансия", layout="wide")
     st.title("Прозрачная вакансия")
@@ -72,7 +95,7 @@ def main() -> None:
         )
 
     filters = st.columns(4)
-    search = filters[0].text_input("Поиск по ID").strip().casefold()
+    search = filters[0].text_input("Поиск по ID или названию").strip().casefold()
     status = filters[1].selectbox(
         "Наличие замечаний", ["Все вакансии", "С замечаниями", "Без замечаний"]
     )
@@ -85,45 +108,27 @@ def main() -> None:
 
     matches = []
     for report in reports:
-        if search not in report.id.casefold():
+        if (
+            search not in report.id.casefold()
+            and search not in (report.job_title or "").casefold()
+        ):
             continue
         if (status == "С замечаниями" and not report.issues) or (
             status == "Без замечаний" and report.issues
         ):
             continue
-        issues = [
-            issue
-            for issue in report.issues
-            if (topic is None or issue.topic == topic)
+        if (topic is None and kind is None) or any(
+            (topic is None or issue.topic == topic)
             and (kind is None or issue.type == kind)
-        ]
-        if issues or (topic is None and kind is None):
-            matches.append((report, issues))
+            for issue in report.issues
+        ):
+            matches.append(report)
 
+    st.caption(f"Найдено {len(matches)} из {len(reports)} вакансий")
     if not matches:
         st.info("По этим фильтрам вакансий нет.")
-        return
-
-    index = st.selectbox(
-        "ID вакансии",
-        range(len(matches)),
-        format_func=lambda index: matches[index][0].id,
-    )
-    report, issues = matches[index]
-    if report.url and is_web_url(report.url):
-        st.link_button("Открыть вакансию", report.url)
-    if not issues:
-        st.success("В отчёте по этой вакансии замечаний нет.")
-        return
-    for issue in issues:
-        with st.container(border=True):
-            st.subheader(f"{TOPICS[issue.topic]} · {TYPES[issue.type]}")
-            st.text(issue.problem)
-            for evidence in issue.evidence:
-                st.text(evidence.field)
-                st.text(evidence.quote or "Сведения отсутствуют.")
-            st.markdown("**Рекомендация редактору**")
-            st.code(issue.recommendation, language=None, wrap_lines=True)
+    for report in matches:
+        show_vacancy(report)
 
 
 if __name__ == "__main__":

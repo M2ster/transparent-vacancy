@@ -342,7 +342,12 @@ def test_local_pipeline_all_unique_rows_and_atomic_failure(
         json.dumps(
             [
                 vacancy,
-                vacancy | {"id": "b", "vac_url": "https://example.org/v"},
+                vacancy
+                | {
+                    "id": "b",
+                    "job-name": "  Реставратор  ",
+                    "vac_url": "https://example.org/v",
+                },
                 vacancy,
             ]
         )
@@ -360,8 +365,13 @@ def test_local_pipeline_all_unique_rows_and_atomic_failure(
     assert main(arguments) == 0
     previous = output.read_bytes()
     assert json.loads(previous) == [
-        {"id": "a", "url": None, "issues": []},
-        {"id": "b", "url": "https://example.org/v", "issues": []},
+        {"id": "a", "url": None, "job_title": "Архивист", "issues": []},
+        {
+            "id": "b",
+            "url": "https://example.org/v",
+            "job_title": "Реставратор",
+            "issues": [],
+        },
     ]
     assert len(calls) == 2
     fail = True
@@ -371,6 +381,52 @@ def test_local_pipeline_all_unique_rows_and_atomic_failure(
     source.write_text('{"results": {}}')
     assert main(arguments) == 1
     assert output.read_bytes() == previous
+
+
+def test_api_report_uses_source_job_title(monkeypatch, tmp_path, vacancy):
+    real_client = httpx.Client
+
+    def handler(request):
+        if request.url.host == "portal.test":
+            return httpx.Response(
+                200,
+                json={
+                    "status": 200,
+                    "meta": {"total": 2},
+                    "results": {
+                        "vacancies": [
+                            {"vacancy": vacancy},
+                            {"vacancy": vacancy | {"id": "b", "job-name": "  "}},
+                        ]
+                    },
+                },
+            )
+        assert request.url.host == "ollama.test"
+        return ollama_response([])
+
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    output = tmp_path / "report.json"
+    assert (
+        main(
+            [
+                "--api-url",
+                "https://portal.test",
+                "--output",
+                str(output),
+                "--ollama-url",
+                "http://ollama.test",
+            ]
+        )
+        == 0
+    )
+    assert [row["job_title"] for row in json.loads(output.read_bytes())] == [
+        "Архивист",
+        None,
+    ]
 
 
 def test_api_failure_keeps_previous_report(monkeypatch, tmp_path):
