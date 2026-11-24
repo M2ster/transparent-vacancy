@@ -20,6 +20,8 @@ ambiguity: процитируй неясное условие. Полные пр
 уточнить текст; не советуй менять процессы и не делай юридических выводов."""
 
 log = logging.getLogger(__name__)
+DEFAULT_CONTEXT = 6144
+MAX_AUTO_CONTEXT = 8192
 
 
 class ReviewError(RuntimeError):
@@ -65,7 +67,7 @@ def analyze(
     *,
     url: str,
     model: str,
-    context: int,
+    context: int | None,
     predict: int,
 ) -> list[Issue]:
     values = dict(leaves(data))
@@ -75,10 +77,17 @@ def analyze(
     )
     # Qwen uses byte-level tokens. Reserve space for the chat wrapper and output.
     size = len((EDITOR + content + correction).encode("utf-8")) + 256 + predict
+    automatic = context is None
+    if context is None:
+        context = DEFAULT_CONTEXT if size <= DEFAULT_CONTEXT else MAX_AUTO_CONTEXT
     if size > context:
-        raise ReviewError(
-            f"Вакансия превышает бюджет контекста. Увеличьте --num-ctx (оценка {size})"
+        message = (
+            f"Вакансия превышает бюджет контекста: оценка {size}, лимит {context}. "
+            "Задайте больший --num-ctx, если хватает памяти."
         )
+        raise ReviewError(message)
+    if automatic and context > DEFAULT_CONTEXT:
+        log.info("Выбран контекст %d токенов. Оценка: %d", context, size)
 
     accepted: list[Issue] = []
     rejected_issues = False

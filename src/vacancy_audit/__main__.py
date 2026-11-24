@@ -6,7 +6,7 @@ from pathlib import Path
 
 import httpx
 
-from .llm import ReviewError, analyze
+from .llm import MAX_AUTO_CONTEXT, ReviewError, analyze
 from .models import VacancyReport
 from .report import write_report
 from .rules import combine_issues, fields
@@ -45,14 +45,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, default=Path("reports/latest.json"))
     parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
     parser.add_argument("--model", default="qwen3:4b")
-    parser.add_argument("--num-ctx", type=positive_int, default=6144)
+    parser.add_argument(
+        "--num-ctx", type=positive_int, help="Фиксированный контекст вместо автовыбора"
+    )
     parser.add_argument("--num-predict", type=positive_int, default=900)
     parser.add_argument("--ollama-timeout", type=seconds, default=60)
     args = parser.parse_args(argv)
     if args.page_size > 100:
         parser.error("--page-size должен быть от 1 до 100")
-    if args.num_predict >= args.num_ctx:
-        parser.error("--num-predict должен быть меньше --num-ctx")
+    if args.num_predict >= (args.num_ctx or MAX_AUTO_CONTEXT):
+        parser.error("--num-predict должен быть меньше максимального контекста запуска")
 
     try:
         if args.input is not None:

@@ -147,7 +147,8 @@ def test_ollama_retries_invalid_evidence_and_uses_valid_response(vacancy):
     assert len(calls) == 2
 
 
-def test_context_overflow_stops_before_ollama():
+@pytest.mark.parametrize("context, length", [(6144, 3600), (None, 6000)])
+def test_context_overflow_stops_before_ollama(context, length):
     def handler(_):
         pytest.fail("Ollama must not receive truncated input")
 
@@ -157,12 +158,37 @@ def test_context_overflow_stops_before_ollama():
     ):
         analyze(
             client,
-            {"duty": "длинный текст " * 1500},
+            {"duty": "a" * length},
             url="http://ollama.test",
             model="qwen3:4b",
-            context=4096,
-            predict=500,
+            context=context,
+            predict=900,
         )
+
+
+@pytest.mark.parametrize("length, expected", [(1500, 6144), (3600, 8192)])
+def test_automatic_context_selects_smallest_supported_size(length, expected):
+    calls = []
+
+    def handler(request):
+        payload = json.loads(request.content)
+        calls.append(payload["options"]["num_ctx"])
+        assert json.loads(payload["messages"][1]["content"]) == {"duty": "a" * length}
+        return ollama_response([])
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        assert (
+            analyze(
+                client,
+                {"duty": "a" * length},
+                url="http://ollama.test",
+                model="qwen3:4b",
+                context=None,
+                predict=900,
+            )
+            == []
+        )
+    assert calls == [expected]
 
 
 @pytest.mark.parametrize(
