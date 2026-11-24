@@ -11,6 +11,7 @@ from vacancy_audit.rules import (
     combine_issues,
     fields,
     merge_issues,
+    missing_issue,
     rules,
     validate_evidence,
 )
@@ -49,11 +50,15 @@ def test_rules_do_not_treat_zero_or_unfilled_optional_field_as_issue(vacancy):
     assert rules(fields(vacancy)) == []
     vacancy.update(salary_min=0, salary_max=0, currency="RUB")
     del vacancy["schedule"]
+    duty = vacancy.pop("duty")
     assert {(item.topic, item.type) for item in rules(fields(vacancy))} == {
+        ("duties", "missing"),
         ("salary", "missing"),
         ("schedule", "missing"),
     }
-    vacancy["conditions"] = "Оплата 45000 рублей. Работа по будням с 9 до 18."
+    vacancy.update(
+        duty=duty, conditions="Оплата 45000 рублей. Работа по будням с 9 до 18."
+    )
     assert rules(fields(vacancy)) == []
 
 
@@ -100,9 +105,75 @@ def test_evidence_uses_exact_paths_and_quotes(vacancy):
     validate_evidence(issue("missing", [("schedule", "")], topic="schedule"), {})
 
 
-def ollama_response(issues):
+@pytest.mark.parametrize(
+    "path, quote, value",
+    [
+        ("duty", "", "Не указано"),
+        ("duty", "Вести архив.", "Вести архив."),
+        ("salary_min", "0", 0),
+    ],
+)
+def test_missing_rejects_nonempty_quotes_and_unrelated_fields(path, quote, value):
+    with pytest.raises(ValueError):
+        validate_evidence(
+            issue("missing", [(path, quote)], topic="salary"), {path: value}
+        )
+
+
+@pytest.mark.parametrize(
+    "topic, path, data",
+    [
+        ("salary", "salary_min", {"salary_min": 0, "salary_currency": "RUB"}),
+        (
+            "requirements",
+            "requirement.education",
+            {"requirement": {"education": "н/д"}},
+        ),
+        ("location", "addresses.address[2].location", {}),
+        ("schedule", "schedule", {"schedule": "не указан"}),
+    ],
+)
+def test_missing_accepts_absent_or_placeholder_field(topic, path, data):
+    validate_evidence(issue("missing", [(path, "")], topic=topic), data)
+
+
+@pytest.mark.parametrize("text_salary", ["", "Оплата 45000 рублей в месяц."])
+def test_shared_prose_leaves_missing_decision_to_one_model_call(text_salary):
+    text = f"Предоставляем ДМС. {text_salary}".strip()
+    data = {"job-name": "Архивист", "conditions": text}
+    topics = ["duties", "requirements", "salary", "schedule", "location", "employment"]
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        payload = json.loads(request.content)
+        schema = payload["format"]["properties"]["coverage"]
+        assert schema["required"] == topics
+        assert None in schema["properties"]["salary"]["enum"]
+        coverage = dict.fromkeys(topics)
+        coverage["salary"] = text_salary or None
+        return ollama_response([], coverage=coverage)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        inferred = analyze(
+            client,
+            data,
+            url="http://ollama.test",
+            model="qwen3:4b",
+            context=None,
+            predict=900,
+        )
+    assert len(calls) == 1
+    assert combine_issues(data, inferred) == [
+        missing_issue(topic)
+        for topic in topics
+        if not (text_salary and topic == "salary")
+    ]
+
+
+def ollama_response(issues, **parts):
     return httpx.Response(
-        200, json={"message": {"content": json.dumps({"issues": issues})}}
+        200, json={"message": {"content": json.dumps({"issues": issues, **parts})}}
     )
 
 
@@ -147,7 +218,7 @@ def test_ollama_retries_invalid_evidence_and_uses_valid_response(vacancy):
     assert len(calls) == 2
 
 
-@pytest.mark.parametrize("context, length", [(6144, 3600), (None, 6000)])
+@pytest.mark.parametrize("context, length", [(6144, 3600), (8192, 6000), (None, 10000)])
 def test_context_overflow_stops_before_ollama(context, length):
     def handler(_):
         pytest.fail("Ollama must not receive truncated input")
@@ -166,24 +237,30 @@ def test_context_overflow_stops_before_ollama(context, length):
         )
 
 
-@pytest.mark.parametrize("length, expected", [(1500, 6144), (3600, 8192)])
-def test_automatic_context_selects_smallest_supported_size(length, expected):
+@pytest.mark.parametrize(
+    "length, context, expected",
+    [(1500, None, 6144), (3600, None, 8192), (6000, None, 12288), (6000, 10000, 10000)],
+)
+def test_context_selects_smallest_supported_size_or_explicit_limit(
+    vacancy, length, context, expected
+):
     calls = []
+    data = fields(vacancy | {"duty": "a" * length})
 
     def handler(request):
         payload = json.loads(request.content)
         calls.append(payload["options"]["num_ctx"])
-        assert json.loads(payload["messages"][1]["content"]) == {"duty": "a" * length}
+        assert json.loads(payload["messages"][1]["content"])["duty"] == "a" * length
         return ollama_response([])
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         assert (
             analyze(
                 client,
-                {"duty": "a" * length},
+                data,
                 url="http://ollama.test",
                 model="qwen3:4b",
-                context=None,
+                context=context,
                 predict=900,
             )
             == []
@@ -199,6 +276,11 @@ def test_specific_schedule_and_salary_are_not_ambiguous(vacancy, schedule):
     inferred = [
         issue("ambiguity", [("schedule", schedule)], topic="schedule"),
         issue("ambiguity", [("salary_max", "0")], topic="salary"),
+        issue(
+            "contradiction",
+            [("salary_min", "70000"), ("salary_max", "0")],
+            topic="salary",
+        ),
     ]
     assert combine_issues(data, inferred) == []
 
@@ -285,7 +367,7 @@ def test_office_address_disclosed_later_is_location_ambiguity(vacancy):
 @pytest.mark.parametrize(
     ("keep_valid", "retry_fails"), [(True, False), (False, False), (True, True)]
 )
-def test_retry_does_not_erase_verified_issues(vacancy, keep_valid, retry_fails):
+def test_retry_does_not_erase_verified_issues(vacancy, keep_valid, retry_fails, caplog):
     valid = issue("ambiguity", [("duty", "Принимать")], topic="duties")
     first = [valid.model_dump()] if keep_valid else []
     responses = iter(
@@ -305,6 +387,7 @@ def test_retry_does_not_erase_verified_issues(vacancy, keep_valid, retry_fails):
                 model="qwen3:4b",
                 context=4096,
                 predict=500,
+                vacancy_id="test-vacancy",
             ) == [valid]
         else:
             with pytest.raises(ReviewError, match="дважды"):
@@ -315,7 +398,49 @@ def test_retry_does_not_erase_verified_issues(vacancy, keep_valid, retry_fails):
                     model="qwen3:4b",
                     context=4096,
                     predict=500,
+                    vacancy_id="test-vacancy",
                 )
+    assert ("частично" in caplog.text) == keep_valid
+    assert ("test-vacancy" in caplog.text) == keep_valid
+
+
+@pytest.mark.parametrize("retry_case", ["fixed", "partial", "duplicate", "timeout"])
+def test_retry_only_warns_if_findings_remain_unconfirmed(vacancy, retry_case, caplog):
+    data = fields(vacancy)
+    first = issue("ambiguity", [("duty", "Принимать")], topic="duties")
+    replacement = issue("ambiguity", [("schedule", "09:00")], topic="schedule")
+    bad = {"topic": "bad"}
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if len(calls) == 1:
+            return ollama_response([first.model_dump(), bad])
+        if retry_case == "timeout":
+            raise httpx.ReadTimeout("timeout", request=request)
+        if retry_case == "duplicate":
+            return ollama_response([first.model_dump()])
+        retry = [replacement.model_dump()]
+        if retry_case == "partial":
+            retry.append(bad)
+        return ollama_response(retry)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        result = analyze(
+            client,
+            data,
+            url="http://ollama.test",
+            model="qwen3:4b",
+            context=None,
+            predict=900,
+            vacancy_id="test-vacancy",
+        )
+    assert result == (
+        [first, replacement] if retry_case in {"fixed", "partial"} else [first]
+    )
+    assert ("test-vacancy" in caplog.text and "частично" in caplog.text) == (
+        retry_case != "fixed"
+    )
 
 
 def test_local_pipeline_all_unique_rows_and_atomic_failure(
@@ -375,6 +500,10 @@ def test_local_pipeline_all_unique_rows_and_atomic_failure(
     ]
     assert len(calls) == 2
     fail = True
+    assert main(arguments) == 1
+    assert len(calls) == 4
+    assert output.read_bytes() == previous
+    source.write_text(json.dumps([vacancy | {"duty": "a" * 15000}]))
     assert main(arguments) == 1
     assert len(calls) == 4
     assert output.read_bytes() == previous

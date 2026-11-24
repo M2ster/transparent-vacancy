@@ -73,6 +73,7 @@ def main(argv: list[str] | None = None) -> int:
         with httpx.Client(timeout=args.ollama_timeout, trust_env=False) as client:
             for index, vacancy in enumerate(vacancies, 1):
                 log.info("Вакансия %d из %d", index, len(vacancies))
+                vacancy_id = str(vacancy["id"]).strip()
                 data = fields(vacancy)
                 try:
                     model_issues = analyze(
@@ -82,6 +83,7 @@ def main(argv: list[str] | None = None) -> int:
                         model=args.model,
                         context=args.num_ctx,
                         predict=args.num_predict,
+                        vacancy_id=vacancy_id,
                     )
                 except ReviewError as exc:
                     raise ReviewError(f"Вакансия {index}: {exc}") from None
@@ -96,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
                 title = vacancy.get("job-name")
                 results.append(
                     VacancyReport(
-                        id=str(vacancy["id"]).strip(),
+                        id=vacancy_id,
                         url=url,
                         job_title=(title.strip() or None)
                         if isinstance(title, str)

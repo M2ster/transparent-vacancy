@@ -37,6 +37,15 @@ FIELDS: dict[Topic, tuple[str, ...]] = {
     "employment": ("employment", "employment_type", "contract_type", "term"),
 }
 SHARED = ("description", "conditions", "additional_information", "benefits")
+FREE_TEXT = (
+    *SHARED,
+    *FIELDS["duties"],
+    "requirement",
+    "requirements",
+    "qualification",
+    "requirement.qualification",
+    "requirements.qualification",
+)
 MISSING: dict[Topic, tuple[str, str]] = {
     "job_title": (
         "Не указано название должности.",
@@ -165,14 +174,19 @@ def display(value: object) -> str:
     return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
 
 
-def topic_present(
-    topic: Topic, values: dict[str, object], *, shared: bool = True
-) -> bool:
-    candidates = (
-        (*FIELDS[topic], *SHARED) if shared and topic != "job_title" else FIELDS[topic]
-    )
+def topic_present(topic: Topic, values: dict[str, object]) -> bool:
     return any(
-        path.split(".", 1)[0].split("[", 1)[0] in candidates
+        path.split(".", 1)[0].split("[", 1)[0] in FIELDS[topic]
+        and path != "salary_currency"
+        and informative(path, value)
+        for path, value in values.items()
+    )
+
+
+def has_free_text(values: dict[str, object]) -> bool:
+    return any(
+        re.sub(r"\[\d+\]", "", path) in FREE_TEXT
+        and isinstance(value, str)
         and informative(path, value)
         for path, value in values.items()
     )
@@ -181,21 +195,11 @@ def topic_present(
 def rules(data: dict) -> list[Issue]:
     values = dict(leaves(data))
     issues = []
-    for topic, (problem, recommendation) in MISSING.items():
-        if not topic_present(topic, values):
-            issues.append(
-                Issue(
-                    topic=topic,
-                    type="missing",
-                    evidence=[
-                        Evidence(field=field, quote="") for field in FIELDS[topic][:2]
-                    ]
-                    if topic == "salary"
-                    else [Evidence(field=FIELDS[topic][0], quote="")],
-                    problem=problem,
-                    recommendation=recommendation,
-                )
-            )
+    free_text = has_free_text(values)
+    for topic in MISSING:
+        # Structured blanks are conclusive only when prose cannot supply the condition.
+        if not topic_present(topic, values) and (topic == "job_title" or not free_text):
+            issues.append(missing_issue(topic))
     minimum, maximum = (money(data.get(field)) for field in SALARY_BOUNDS)
     if minimum is not None and maximum is not None and minimum > maximum > 0:
         issues.append(
@@ -228,6 +232,18 @@ def rules(data: dict) -> list[Issue]:
                 )
             )
     return issues + text_issues(values)
+
+
+def missing_issue(topic: Topic) -> Issue:
+    problem, recommendation = MISSING[topic]
+    paths = FIELDS[topic][:2] if topic == "salary" else FIELDS[topic][:1]
+    return Issue(
+        topic=topic,
+        type="missing",
+        evidence=[Evidence(field=path, quote="") for path in paths],
+        problem=problem,
+        recommendation=recommendation,
+    )
 
 
 def text_issues(values: dict[str, object]) -> list[Issue]:
@@ -342,13 +358,15 @@ def combine_issues(data: dict, inferred: list[Issue]) -> list[Issue]:
             continue
         if (
             issue.topic == "salary"
-            and issue.type == "ambiguity"
             and (
-                paths <= {*SALARY_BOUNDS, "currency", "salary_currency"}
-                and minimum is not None
-                and minimum > 0
-                and (maximum is None or maximum == 0 or maximum >= minimum)
+                issue.type == "ambiguity"
+                and paths <= {*SALARY_BOUNDS, "currency", "salary_currency"}
+                or issue.type == "contradiction"
+                and paths == set(SALARY_BOUNDS)
             )
+            and minimum is not None
+            and minimum > 0
+            and (maximum is None or maximum == 0 or maximum >= minimum)
         ):
             continue
         if issue.topic == "schedule" and isinstance(scheduled, str):
@@ -384,28 +402,39 @@ def combine_issues(data: dict, inferred: list[Issue]) -> list[Issue]:
     return merge_issues(verified)
 
 
+def missing_field(topic: Topic, path: str) -> bool:
+    if path in FIELDS[topic]:
+        return True
+    if topic == "requirements":
+        return bool(
+            re.fullmatch(
+                r"requirements?\.(education|experience|qualification|skills)", path
+            )
+        )
+    return topic == "location" and bool(
+        re.fullmatch(r"addresses\.address\[\d+\]\.(location|address|city|region)", path)
+    )
+
+
 def validate_evidence(issue: Issue, data: dict) -> None:
     values = dict(leaves(data))
     if not issue.problem.strip() or not issue.recommendation.strip():
         raise ValueError("Пустое описание замечания")
-    if issue.type == "missing" and topic_present(issue.topic, values, shared=False):
-        raise ValueError("Для темы уже есть сведения")
+    if issue.type == "missing":
+        if topic_present(issue.topic, values):
+            raise ValueError("Для темы уже есть сведения")
+        if any(
+            evidence.quote
+            or not missing_field(issue.topic, evidence.field)
+            or informative(evidence.field, values.get(evidence.field))
+            for evidence in issue.evidence
+        ):
+            raise ValueError(
+                "Для пропуска укажите отсутствующее поле темы и пустую цитату"
+            )
+        return
     for evidence in issue.evidence:
         path, quote = evidence.field, evidence.quote
-        if not quote and issue.type == "missing":
-            known = (
-                path in values
-                or path in FIELDS[issue.topic]
-                or path
-                in {
-                    "requirement.education",
-                    "requirement.experience",
-                    "requirement.qualification",
-                    "addresses.address[0].location",
-                }
-            )
-            if known and not informative(path, values.get(path)):
-                continue
         value = values.get(path)
         if (
             path not in values
