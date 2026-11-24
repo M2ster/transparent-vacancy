@@ -1,4 +1,5 @@
 import json
+import re
 from collections.abc import Iterator
 from decimal import Decimal, InvalidOperation
 
@@ -65,6 +66,41 @@ MISSING: dict[Topic, tuple[str, str]] = {
 }
 PLACEHOLDERS = {"", "-", "—", "не указано", "не указан", "не указана", "н/д", "null"}
 SALARY_BOUNDS = ("salary_min", "salary_max")
+YEARS = r"(?:от|не менее|минимум)\s+[1-9]\d*\s*(?:лет|год\w*|месяц\w*)\b"
+EXPERIENCE = re.compile(
+    rf"\b(?:опыт|стаж)\w*\b.*?\b{YEARS}|\b{YEARS}\s+(?:опыт|стаж)\w*\b", re.I
+)
+OPTIONAL = re.compile(
+    r"\b(?:желател\w*|приветств\w*|преимуществ\w*|не\s+(?:обязател\w*|требу\w*))\b",
+    re.I,
+)
+REMOTE = re.compile(
+    r"\b(?:полностью|только|исключительно|100\s*%)\s+(?:удал[её]н\w*|дистанцион\w*)",
+    re.I,
+)
+OFFICE = re.compile(r"\b(?:в\s+офис\w*|очн\w*)\b", re.I)
+ALL_DAYS = re.compile(
+    r"\b(?:ежеднев\w*|кажд\w*\s+рабоч\w*\s+день|все\s+рабочие\s+дни)\b", re.I
+)
+OFFICE_ONLY = re.compile(
+    r"\b(?:только|исключительно)\s+(?:работа\s+)?в\s+офис\w*\b", re.I
+)
+TIMETABLE = re.compile(r"\b(?:\d+/\d+|\d{1,2}:\d{2}\s*(?:[–—-]|до)\s*\d{1,2}:\d{2})\b")
+OPEN_SCHEDULE = re.compile(
+    r"\b(?:гибк\w*|плавающ\w*|иногда|или|по договор[её]нности|по согласованию)\b", re.I
+)
+GENERIC_SCHEDULE = re.compile(r"(?:гибкий|сменный|плавающий) график[.!]?", re.I)
+START_WINDOW = re.compile(
+    r"\b(?:начал\w*|старт\w*)\b[^.!?]*?\b(?:между|с)\s+\d{1,2}:\d{2}"
+    r"\s+(?:и|до)\s+\d{1,2}:\d{2}\b",
+    re.I,
+)
+DEFERRED_LOCATION = re.compile(
+    r"\b(?:формат|адрес|место)(?:\s+и\s+адрес)?\s+(?:работы|офиса|рабочего места)\b"
+    r".*?\b(?:уточн\w*|сообщ\w*|обсужд\w*)\b"
+    r".*?\b(?:позже|отдельно|на\s+собеседовани\w*|при\s+собеседовани\w*)\b",
+    re.I,
+)
 
 
 def fields(vacancy: dict) -> dict:
@@ -174,7 +210,178 @@ def rules(data: dict) -> list[Issue]:
                 recommendation="Проверьте обе границы и укажите правильный диапазон зарплаты.",
             )
         )
+    schedule = data.get("schedule")
+    if isinstance(schedule, str) and GENERIC_SCHEDULE.fullmatch(schedule.strip()):
+        details = " ".join(value for value in values.values() if isinstance(value, str))
+        if not TIMETABLE.search(details) and not re.search(
+            r"\b(?:можно\s+выбрать|согласовыва\w*|начало\s+смен\w*|начало\s+работ\w*)\b",
+            details,
+            re.I,
+        ):
+            issues.append(
+                Issue(
+                    topic="schedule",
+                    type="ambiguity",
+                    evidence=[Evidence(field="schedule", quote=schedule)],
+                    problem="Указан тип графика, но его практические условия не описаны.",
+                    recommendation="Уточните, как выбираются часы или как чередуются смены.",
+                )
+            )
+    return issues + text_issues(values)
+
+
+def text_issues(values: dict[str, object]) -> list[Issue]:
+    clauses = [
+        Evidence(field=path, quote=clause.strip())
+        for path, value in values.items()
+        if isinstance(value, str)
+        for clause in re.split(r"(?<=[.!?;])\s+|\n", value)
+        if clause.strip()
+    ]
+    issues = []
+    experience = next(
+        (
+            item
+            for item in clauses
+            if (
+                EXPERIENCE.search(item.quote)
+                and not OPTIONAL.search(item.quote)
+                and item.field.split(".", 1)[0].split("[", 1)[0]
+                in (*FIELDS["requirements"], *SHARED)
+            )
+        ),
+        None,
+    )
+    zero = next(
+        (
+            path
+            for path in ("requirement.experience", "experience")
+            if money(values.get(path)) == 0
+        ),
+        None,
+    )
+    if zero and experience:
+        issues.append(
+            Issue(
+                topic="requirements",
+                type="contradiction",
+                evidence=[
+                    Evidence(field=zero, quote=display(values[zero])),
+                    experience,
+                ],
+                problem="В поле стажа указан ноль, а в тексте задан обязательный минимум.",
+                recommendation="Согласуйте минимальный стаж в структурированном поле и тексте.",
+            )
+        )
+    remote = next(
+        (
+            item
+            for item in clauses
+            if REMOTE.search(item.quote)
+            and not re.search(
+                r"\bне\s+(?:полностью|только|исключительно)\b", item.quote, re.I
+            )
+        ),
+        None,
+    )
+    office = next(
+        (
+            item
+            for item in clauses
+            if OFFICE.search(item.quote)
+            and (ALL_DAYS.search(item.quote) or OFFICE_ONLY.search(item.quote))
+            and not OPTIONAL.search(item.quote)
+            and not re.search(
+                r"\b(?:без|обучени\w*|стажиров\w*)\b|\bне\s+(?:кажд|ежеднев|только)",
+                item.quote,
+                re.I,
+            )
+        ),
+        None,
+    )
+    if remote and office and remote != office:
+        issues.append(
+            Issue(
+                topic="location",
+                type="contradiction",
+                evidence=[remote, office],
+                problem="Полностью удалённый формат расходится с требованием работать в офисе.",
+                recommendation="Укажите один формат и согласуйте с ним правила присутствия в офисе.",
+            )
+        )
+    deferred = next(
+        (item for item in clauses if DEFERRED_LOCATION.search(item.quote)), None
+    )
+    if deferred:
+        issues.append(
+            Issue(
+                topic="location",
+                type="ambiguity",
+                evidence=[deferred],
+                problem="Формат или рабочий адрес предлагается узнать позже.",
+                recommendation="Укажите известный формат работы и место, где сотрудник будет работать очно.",
+            )
+        )
     return issues
+
+
+def combine_issues(data: dict, inferred: list[Issue]) -> list[Issue]:
+    verified = rules(data)
+    scheduled = data.get("schedule", "")
+    minimum, maximum = (money(data.get(field)) for field in SALARY_BOUNDS)
+    determinate = [
+        {item.field for item in issue.evidence}
+        for issue in verified
+        if issue.type == "contradiction"
+    ]
+    for issue in inferred:
+        paths = {item.field for item in issue.evidence}
+        if issue.type in {"ambiguity", "contradiction"} and paths in determinate:
+            continue
+        if any(DEFERRED_LOCATION.search(item.quote) for item in issue.evidence):
+            continue
+        if (
+            issue.topic == "salary"
+            and issue.type == "ambiguity"
+            and (
+                paths <= {*SALARY_BOUNDS, "currency", "salary_currency"}
+                and minimum is not None
+                and minimum > 0
+                and (maximum is None or maximum == 0 or maximum >= minimum)
+            )
+        ):
+            continue
+        if issue.topic == "schedule" and isinstance(scheduled, str):
+            timetable = TIMETABLE.findall(scheduled)
+            if (
+                issue.type == "ambiguity"
+                and paths == {"schedule"}
+                and (
+                    timetable
+                    and len({"/" in part for part in timetable}) == len(timetable)
+                    and not OPEN_SCHEDULE.search(scheduled)
+                    or GENERIC_SCHEDULE.fullmatch(scheduled.strip())
+                    and any(
+                        START_WINDOW.search(value)
+                        for _, value in leaves(data)
+                        if isinstance(value, str)
+                    )
+                )
+            ):
+                continue
+            if (
+                paths == {"schedule", "employment"}
+                and re.fullmatch(r"гибкий график[.!]?", scheduled.strip(), re.I)
+                and isinstance(data.get("employment"), str)
+                and re.fullmatch(
+                    r"(?:полная|частичная) занятость[.!]?",
+                    data["employment"].strip(),
+                    re.I,
+                )
+            ):
+                continue
+        verified.append(issue)
+    return merge_issues(verified)
 
 
 def validate_evidence(issue: Issue, data: dict) -> None:

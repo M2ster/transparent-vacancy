@@ -1,36 +1,70 @@
-{
-  "status": "200",
-  "meta": {"total": "3", "limit": "3", "offset": "0"},
-  "results": {
-    "vacancies": [
-      {"vacancy": {
-        "id": "example-clear",
-        "job-name": "Архивист",
-        "salary_min": 50000, "salary_max": 60000, "currency": "RUB",
-        "employment": "Полная занятость", "schedule": "Пн–пт, 09:00–18:00",
-        "duty": "Принимать документы и вести электронный каталог.",
-        "requirement": {"experience": 0, "qualification": "Умение работать с электронными таблицами."},
-        "addresses": {"address": [{"location": "Калининград, ул. Примерная, 1"}]}
-      }},
-      {"vacancy": {
-        "id": "example-conflict",
-        "job-name": "Технический писатель",
-        "salary_min": 80000, "salary_max": 100000, "currency": "RUB",
-        "employment": "Полная занятость", "schedule": "Пн–пт, 09:00–18:00",
-        "duty": "Писать инструкции к продукту.",
-        "requirement": {"experience": 2, "qualification": "Опыт подготовки документации."},
-        "workPlaceType": "Полностью удалённая работа",
-        "conditions": "Работа только в офисе. Удалённая работа запрещена."
-      }},
-      {"vacancy": {
-        "id": "example-missing",
-        "job-name": "Ассистент архива",
-        "salary_min": 0, "salary_max": 0,
-        "employment": "Частичная занятость",
-        "duty": "Сканировать документы.",
-        "requirement": {"experience": 0},
-        "addresses": {"address": [{"location": "Калининград, ул. Примерная, 3"}]}
-      }}
-    ]
+[
+  {
+    "job-name": "Техник лаборатории",
+    "duty": "Калибровать термометры и отмечать результаты в журнале.",
+    "salary_min": 64000,
+    "salary_max": 72000,
+    "currency": "RUB",
+    "employment": "Полная занятость",
+    "schedule": "Смены 3/3, 07:30–16:30",
+    "requirement": {
+      "education": "Не указано",
+      "experience": 0,
+      "qualification": "Умение работать с измерительными приборами."
+    },
+    "addresses": {
+      "address": [
+        {
+          "location": "Псков, ул. Примерная, 11"
+        }
+      ]
+    },
+    "id": "control-detailed"
+  },
+  {
+    "job-name": "Техник лаборатории",
+    "duty": "Калибровать термометры и отмечать результаты в журнале.",
+    "salary_min": 64000,
+    "salary_max": 72000,
+    "currency": "RUB",
+    "employment": "Полная занятость",
+    "schedule": "Сменный график",
+    "requirement": {
+      "education": "Не указано",
+      "experience": 0,
+      "qualification": "Умение работать с измерительными приборами."
+    },
+    "addresses": {
+      "address": [
+        {
+          "location": "Псков, ул. Примерная, 11"
+        }
+      ]
+    },
+    "id": "shift-needs-detail"
+  },
+  {
+    "job-name": "Техник лаборатории",
+    "duty": "Калибровать термометры и отмечать результаты в журнале.",
+    "salary_min": 64000,
+    "salary_max": 72000,
+    "currency": "RUB",
+    "employment": "Полная занятость",
+    "schedule": "Пн–пт, 07:30–16:30",
+    "requirement": {
+      "education": "Не указано",
+      "experience": 0,
+      "qualification": "Умение работать с измерительными приборами."
+    },
+    "addresses": {
+      "address": [
+        {
+          "location": "Псков, ул. Примерная, 11"
+        }
+      ]
+    },
+    "id": "office-conflict",
+    "workPlaceType": "Исключительно удалённый режим.",
+    "conditions": "Очная работа в офисе каждый рабочий день."
   }
-}
+]

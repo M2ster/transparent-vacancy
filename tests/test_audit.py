@@ -7,7 +7,13 @@ import pytest
 from vacancy_audit.__main__ import main
 from vacancy_audit.llm import ReviewError, analyze
 from vacancy_audit.models import Issue
-from vacancy_audit.rules import fields, merge_issues, rules, validate_evidence
+from vacancy_audit.rules import (
+    combine_issues,
+    fields,
+    merge_issues,
+    rules,
+    validate_evidence,
+)
 
 
 def issue(kind, evidence, *, topic="location"):
@@ -157,6 +163,133 @@ def test_context_overflow_stops_before_ollama():
             context=4096,
             predict=500,
         )
+
+
+@pytest.mark.parametrize(
+    "schedule", ["Полная занятость, 4/3", "Смены 3/3, 07:30–16:30"]
+)
+def test_specific_schedule_and_salary_are_not_ambiguous(vacancy, schedule):
+    data = fields(vacancy | {"schedule": schedule})
+    inferred = [
+        issue("ambiguity", [("schedule", schedule)], topic="schedule"),
+        issue("ambiguity", [("salary_max", "0")], topic="salary"),
+    ]
+    assert combine_issues(data, inferred) == []
+
+
+def test_generic_shift_and_specific_flexibility(vacancy):
+    assert [
+        (item.topic, item.type)
+        for item in rules(fields(vacancy | {"schedule": "Сменный график"}))
+    ] == [
+        ("schedule", "ambiguity"),
+    ]
+    data = fields(
+        vacancy
+        | {
+            "schedule": "Гибкий график",
+            "conditions": "Начало работы между 07:00 и 10:00.",
+        }
+    )
+    assert rules(data) == []
+    inferred = issue("ambiguity", [("schedule", "Гибкий график")], topic="schedule")
+    assert combine_issues(data, [inferred]) == []
+
+
+def test_clear_conflicts_use_both_fields_and_keep_the_right_topic(vacancy):
+    data = fields(
+        vacancy
+        | {
+            "requirement": {
+                "experience": 0,
+                "qualification": "Опыт монтажа от 18 месяцев.",
+            },
+            "workPlaceType": "Исключительно удалённый режим.",
+            "conditions": "Очная работа каждый рабочий день.",
+        }
+    )
+    inferred = [
+        issue(
+            "ambiguity",
+            [
+                ("workPlaceType", "удалённый режим"),
+                ("conditions", "каждый рабочий день"),
+            ],
+            topic="duties",
+        )
+    ]
+    items = combine_issues(data, inferred)
+    assert [(item.topic, item.type) for item in items] == [
+        ("requirements", "contradiction"),
+        ("location", "contradiction"),
+    ]
+    for item in items:
+        validate_evidence(item, data)
+
+
+def test_optional_experience_and_hybrid_onboarding_do_not_conflict(vacancy):
+    data = fields(
+        vacancy
+        | {
+            "requirement": {
+                "education": "Не указано",
+                "experience": 0,
+                "qualification": "Желателен стаж от 2 лет.",
+            },
+            "workPlaceType": "После вводной недели полностью дистанционно.",
+            "conditions": "Во время обучения ежедневно присутствовать в офисе.",
+        }
+    )
+    assert rules(data) == []
+
+
+def test_office_address_disclosed_later_is_location_ambiguity(vacancy):
+    deferred = "Адрес офиса сообщим позже."
+    data = fields(vacancy | {"conditions": deferred})
+    inferred = issue(
+        "contradiction",
+        [("conditions", deferred), ("employment", "Полная занятость")],
+        topic="employment",
+    )
+    assert [(item.topic, item.type) for item in combine_issues(data, [inferred])] == [
+        ("location", "ambiguity")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("keep_valid", "retry_fails"), [(True, False), (False, False), (True, True)]
+)
+def test_retry_does_not_erase_verified_issues(vacancy, keep_valid, retry_fails):
+    valid = issue("ambiguity", [("duty", "Принимать")], topic="duties")
+    first = [valid.model_dump()] if keep_valid else []
+    responses = iter(
+        [
+            ollama_response(first + [{"topic": "bad"}]),
+            httpx.Response(503) if retry_fails else ollama_response([]),
+        ]
+    )
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda _: next(responses))
+    ) as client:
+        if keep_valid:
+            assert analyze(
+                client,
+                fields(vacancy),
+                url="http://ollama.test",
+                model="qwen3:4b",
+                context=4096,
+                predict=500,
+            ) == [valid]
+        else:
+            with pytest.raises(ReviewError, match="дважды"):
+                analyze(
+                    client,
+                    fields(vacancy),
+                    url="http://ollama.test",
+                    model="qwen3:4b",
+                    context=4096,
+                    predict=500,
+                )
 
 
 def test_local_pipeline_all_unique_rows_and_atomic_failure(

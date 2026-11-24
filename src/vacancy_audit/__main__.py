@@ -9,7 +9,7 @@ import httpx
 from .llm import ReviewError, analyze
 from .models import VacancyReport
 from .report import write_report
-from .rules import fields, merge_issues, rules
+from .rules import combine_issues, fields
 from .source import API_URL, fetch_vacancies, read_file
 
 log = logging.getLogger("vacancy_audit")
@@ -45,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, default=Path("reports/latest.json"))
     parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
     parser.add_argument("--model", default="qwen3:4b")
-    parser.add_argument("--num-ctx", type=positive_int, default=4096)
+    parser.add_argument("--num-ctx", type=positive_int, default=6144)
     parser.add_argument("--num-predict", type=positive_int, default=900)
     parser.add_argument("--ollama-timeout", type=seconds, default=60)
     args = parser.parse_args(argv)
@@ -95,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
                     VacancyReport(
                         id=str(vacancy["id"]).strip(),
                         url=url,
-                        issues=merge_issues(rules(data) + model_issues),
+                        issues=combine_issues(data, model_issues),
                     )
                 )
         write_report(args.output, results)

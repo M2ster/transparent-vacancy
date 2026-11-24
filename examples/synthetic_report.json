@@ -1,7 +1,25 @@
 [
   {
     "issues": [],
-    "id": "example-clear",
+    "id": "control-detailed",
+    "url": null
+  },
+  {
+    "issues": [
+      {
+        "topic": "schedule",
+        "type": "ambiguity",
+        "evidence": [
+          {
+            "field": "schedule",
+            "quote": "Сменный график"
+          }
+        ],
+        "problem": "Указан тип графика, но его практические условия не описаны.",
+        "recommendation": "Уточните, как выбираются часы или как чередуются смены."
+      }
+    ],
+    "id": "shift-needs-detail",
     "url": null
   },
   {
@@ -11,53 +29,19 @@
         "type": "contradiction",
         "evidence": [
           {
-            "field": "conditions",
-            "quote": "Работа только в офисе. Удалённая работа запрещена."
-          },
-          {
             "field": "workPlaceType",
-            "quote": "Полностью удалённая работа"
-          }
-        ],
-        "problem": "Конфликт между требованием работы только в офисе и указанием полностью удалённой работы",
-        "recommendation": "Изменить workPlaceType на 'Офисная работа' или убрать противоречивые условия"
-      }
-    ],
-    "id": "example-conflict",
-    "url": null
-  },
-  {
-    "issues": [
-      {
-        "topic": "salary",
-        "type": "missing",
-        "evidence": [
-          {
-            "field": "salary_min",
-            "quote": ""
+            "quote": "Исключительно удалённый режим."
           },
           {
-            "field": "salary_max",
-            "quote": ""
+            "field": "conditions",
+            "quote": "Очная работа в офисе каждый рабочий день."
           }
         ],
-        "problem": "Оплата не указана.",
-        "recommendation": "Укажите сумму, диапазон или порядок расчёта оплаты."
-      },
-      {
-        "topic": "schedule",
-        "type": "missing",
-        "evidence": [
-          {
-            "field": "schedule",
-            "quote": ""
-          }
-        ],
-        "problem": "График работы не указан.",
-        "recommendation": "Укажите дни и часы работы либо длительность и порядок смен."
+        "problem": "Полностью удалённый формат расходится с требованием работать в офисе.",
+        "recommendation": "Укажите один формат и согласуйте с ним правила присутствия в офисе."
       }
     ],
-    "id": "example-missing",
+    "id": "office-conflict",
     "url": null
   }
 ]
