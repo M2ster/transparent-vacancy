@@ -1,0 +1,2 @@
+# Пример для crontab -e. При необходимости измените расписание и путь проекта.
+15 7 * * * cd "$HOME/projects/transparent-vacancy" && /usr/bin/flock -n .vacancy-audit.lock "$HOME/.local/bin/uv" run --locked python -m vacancy_audit >> .cron.log 2>&1
