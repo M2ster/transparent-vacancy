@@ -65,7 +65,10 @@ def test_editor_loads_report_and_filters_issues():
     assert not app.exception
     assert len(app.expander[1:]) == 1
     assert app.get("link_button")[0].url == "https://example.org/vacancy"
-    assert [item.value for item in app.text][1::3] == ["workPlaceType", "schedule"]
+    assert [item.value for item in app.text][1::3] == [
+        "Формат работы (workPlaceType)",
+        "График работы (schedule)",
+    ]
     assert [item.value for item in app.text][2::3] == [
         "Удалённый режим.",
         "Сменный график",
@@ -78,6 +81,57 @@ def test_editor_loads_report_and_filters_issues():
     assert app.info[0].value == "По этим фильтрам вакансий нет."
     assert app.caption[-1].value == "Найдено 0 из 3 вакансий"
     assert not app.expander[1:]
+
+
+def test_editor_labels_evidence_without_changing_paths_or_quotes():
+    app = AppTest.from_file(ROOT / "app.py").run()
+    report = [
+        {
+            "id": "field-labels",
+            "url": None,
+            "issues": [
+                {
+                    "topic": "requirements",
+                    "type": "contradiction",
+                    "evidence": [
+                        {"field": "duty", "quote": "Принимаем без опыта."},
+                        {
+                            "field": "requirement.qualification",
+                            "quote": "Обязателен опыт от трёх лет.",
+                        },
+                    ],
+                    "problem": "Условия по опыту расходятся.",
+                    "recommendation": "Укажите единое требование к опыту.",
+                },
+                {
+                    "topic": "location",
+                    "type": "ambiguity",
+                    "evidence": [
+                        {"field": "addresses.address[2].location", "quote": "Офис"},
+                        {"field": "addresses.address[2].other", "quote": "Позже"},
+                    ],
+                    "problem": "Адрес офиса неясен.",
+                    "recommendation": "Укажите адрес офиса.",
+                },
+            ],
+        }
+    ]
+    app.file_uploader[0].upload("report.json", json.dumps(report).encode()).run()
+    assert not app.exception
+    texts = [item.value for item in app.text]
+    assert texts[1:5] == [
+        "Обязанности (duty)",
+        "Принимаем без опыта.",
+        "Квалификационные требования (requirement.qualification)",
+        "Обязателен опыт от трёх лет.",
+    ]
+    assert texts[6:] == [
+        "Адрес работы (addresses.address[2].location)",
+        "Офис",
+        "addresses.address[2].other",
+        "Позже",
+    ]
+    assert app.code[0].value == "Укажите единое требование к опыту."
 
 
 def test_editor_handles_missing_evidence_and_bad_uploads():
@@ -100,7 +154,10 @@ def test_editor_handles_missing_evidence_and_bad_uploads():
     app.file_uploader[0].upload("report.json", json.dumps(report).encode()).run()
     assert not app.exception
     assert not app.get("link_button")
-    assert [item.value for item in app.text][-2:] == ["salary", "Сведения отсутствуют."]
+    assert [item.value for item in app.text][-2:] == [
+        "Оплата (salary)",
+        "Сведения отсутствуют.",
+    ]
 
     app.file_uploader[0].upload("empty.json", b"[]").run()
     assert app.info[0].value == "Отчёт пуст."

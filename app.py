@@ -7,6 +7,7 @@ import streamlit as st
 from pydantic import TypeAdapter, ValidationError
 
 from vacancy_audit.models import VacancyReport
+from vacancy_audit.rules import FIELDS
 
 TOPICS = {
     "job_title": "Должность",
@@ -17,6 +18,54 @@ TOPICS = {
     "location": "Место работы",
     "employment": "Занятость",
 }
+FIELD_LABELS = {
+    field: TOPICS[topic] for topic, fields in FIELDS.items() for field in fields
+}
+FIELD_LABELS.update(
+    {
+        "experience": "Опыт работы",
+        "education": "Образование",
+        "qualification": "Квалификационные требования",
+        "skills": "Навыки",
+        "requirement.experience": "Опыт работы",
+        "requirement.education": "Образование",
+        "requirement.qualification": "Квалификационные требования",
+        "requirement.skills": "Навыки",
+        "salary_min": "Минимальная оплата",
+        "salary_max": "Максимальная оплата",
+        "salary_currency": "Валюта оплаты",
+        "currency": "Валюта оплаты",
+        "schedule": "График работы",
+        "work_schedule": "График работы",
+        "shift": "Смены",
+        "work_hours": "Часы работы",
+        "addresses": "Адреса работы",
+        "addresses.address": "Адрес работы",
+        "addresses.address.address": "Адрес работы",
+        "addresses.address.location": "Адрес работы",
+        "addresses.address.city": "Город",
+        "addresses.address.region": "Регион",
+        "address": "Адрес работы",
+        "city": "Город",
+        "region": "Регион",
+        "region.name": "Название региона",
+        "region.region_code": "Код региона",
+        "workPlaceType": "Формат работы",
+        "workPlaceType.workPlaceForeign": "Рабочие места для иностранных работников",
+        "workPlaceType.workPlaceOrdinary": "Обычные рабочие места",
+        "workPlaceType.workPlaceQuota": "Рабочие места по квоте",
+        "workPlaceType.workPlaceSpecial": "Специальные рабочие места",
+        "remote": "Удалённая работа",
+        "employment_type": "Тип занятости",
+        "contract_type": "Вид договора",
+        "term": "Срок работы",
+        "term.text": "Срок работы",
+        "description": "Описание вакансии",
+        "conditions": "Условия работы",
+        "additional_information": "Дополнительная информация",
+        "benefits": "Льготы и преимущества",
+    }
+)
 TYPES = {
     "missing": "Нет сведений",
     "ambiguity": "Неоднозначность",
@@ -54,7 +103,9 @@ def show_vacancy(report: VacancyReport) -> None:
                 st.subheader(f"{TOPICS[issue.topic]} · {TYPES[issue.type]}")
                 st.text(issue.problem)
                 for evidence in issue.evidence:
-                    st.text(evidence.field)
+                    path = evidence.field
+                    label = FIELD_LABELS.get(re.sub(r"\[\d+\]", "", path))
+                    st.text(f"{label} ({path})" if label else path)
                     st.text(evidence.quote or "Сведения отсутствуют.")
                 st.markdown("**Рекомендация редактору**")
                 st.code(issue.recommendation, language=None, wrap_lines=True)
